@@ -241,12 +241,17 @@ router.post("/payment/:studentId", async (req, res) => {
 
     await db.collection("payments").insertOne(payment);
 
+    const numericAmount = Number(amount);
+    if (isNaN(numericAmount)) {
+      return res.status(400).json({ error: "Invalid amount. Must be a number." });
+    }
+    
     await db.collection("students").updateOne(
       { _studentId: student._studentId },
       {
         $push: { payments: payment.paymentId },
-        $inc: { totalPaid: amount },
-        $set: { balance: student.tuitionFee - (student.totalPaid + amount) },
+        $inc: { totalPaid: numericAmount },
+        $set: { balance: student.tuitionFee - (student.totalPaid + numericAmount) },
       }
     );
 
