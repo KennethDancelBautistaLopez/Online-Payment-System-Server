@@ -144,15 +144,18 @@ router.post("/payment/:studentId", async (req, res) => {
     const { studentId } = req.params;
     const { amount, description, examPeriod } = req.body;
 
+    // Validate incoming request parameters
     if (!studentId || !amount || !description || !examPeriod) {
       return res.status(400).json({ error: "Student ID, amount, description, and exam period are required" });
     }
 
+    // Fetch student data from the database
     const student = await db.collection("students").findOne({ _studentId: studentId });
     if (!student) {
       return res.status(404).json({ error: "Student not found" });
     }
 
+    // Check if the student has already paid for this exam period
     const existingPaymentForPeriod = await db.collection("payments").findOne({
       studentId: student._studentId,
       examPeriod,
@@ -165,16 +168,19 @@ router.post("/payment/:studentId", async (req, res) => {
       return res.status(400).json({ error: errorMessage });
     }
 
+    // Set default tuition fee if not present
     if (!student.tuitionFee || student.tuitionFee === 0) {
-      student.tuitionFee = 14000;
+      student.tuitionFee = 14000; // Default value
     }
 
+    // Prepare billing details for PayMongo
     const billingDetails = {
       name: `${student.fname} ${student.mname || ""} ${student.lname}`,
       email: student.email,
       phone: student.mobile,
     };
 
+    // Metadata for PayMongo
     const metadata = {
       studentId: student._studentId,
       email: student.email,
@@ -185,9 +191,11 @@ router.post("/payment/:studentId", async (req, res) => {
       semester: student.semester || "",
     };
 
+    // PayMongo API key and encoding
     const API_KEY = process.env.PAY_MONGO;
     const encodedKey = Buffer.from(`${API_KEY}:`).toString("base64");
 
+    // Create payment link with PayMongo
     const paymongoRes = await fetch("https://api.paymongo.com/v1/links", {
       method: "POST",
       headers: {
@@ -197,7 +205,7 @@ router.post("/payment/:studentId", async (req, res) => {
       body: JSON.stringify({
         data: {
           attributes: {
-            amount: amount * 100,
+            amount: amount * 100, // Convert amount to centavos (e.g., ₱1500 becomes 150000)
             description,
             redirect: {
               success: "http://localhost:3000/payments/success",
@@ -210,15 +218,18 @@ router.post("/payment/:studentId", async (req, res) => {
       }),
     });
 
+    // Handle errors from PayMongo
     if (!paymongoRes.ok) {
       const errorData = await paymongoRes.json();
       console.error("❌ PayMongo Error:", errorData);
       return res.status(500).json({ error: "PayMongo payment creation failed", details: errorData });
     }
 
+    // Get the PayMongo response data
     const paymongoData = await paymongoRes.json();
     const linkData = paymongoData.data;
 
+    // Payment object to insert into the database
     const payment = {
       paymentId: linkData.id,
       amount,
@@ -239,13 +250,16 @@ router.post("/payment/:studentId", async (req, res) => {
       createdAt: new Date(),
     };
 
+    // Insert payment record into the payments collection
     await db.collection("payments").insertOne(payment);
 
+    // Handle payment calculation (convert to numeric)
     const numericAmount = Number(amount);
     if (isNaN(numericAmount)) {
       return res.status(400).json({ error: "Invalid amount. Must be a number." });
     }
-    
+
+    // Update the student document with the new payment details
     await db.collection("students").updateOne(
       { _studentId: student._studentId },
       {
@@ -255,6 +269,7 @@ router.post("/payment/:studentId", async (req, res) => {
       }
     );
 
+    // Send back the response with PayMongo checkout URL
     return res.status(201).json({
       success: true,
       data: payment,
